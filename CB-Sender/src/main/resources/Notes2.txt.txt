@@ -1,0 +1,19 @@
+- `slidingWindowSize = 10` → Examine the latest 10 calls.
+- `minimumNumberOfCalls = 3` → Wait until at least 3 calls have been recorded before calculating the failure rate.
+- `failureRateThreshold = 50` → Open the circuit when 50% or more of the recorded calls fail.
+
+### Example
+
+| Call | Result | Failure rate so far | Circuit state |
+| ---- | ------ | ------------------- | ------------- |
+| 1    | Failed | Not calculated      | CLOSED        |
+| 2    | Failed | Not calculated      | CLOSED        |
+| 3    | Failed | 100% (3/3)          | OPEN          |
+
+Why doesn't it open on the second failure? Because only 2 calls have occurred, but the minimum is 3.
+
+Remember: The threshold is a percentage of the calls recorded, not a percentage of the minimum number itself. At 3 calls, a single failure is 33.3%, while 2 failures are 66.7%, which exceeds the 50% threshold.
+
+
+
+*sliding window size is the maximum number of recent calls considered, and minimum number of calls is the minimum required before calculating the failure percentage against the threshold.
