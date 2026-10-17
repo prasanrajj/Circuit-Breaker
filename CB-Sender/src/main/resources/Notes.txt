@@ -1,0 +1,127 @@
+The main purpose of a circuit breaker is to prevent repeated calls to a failing service, protect resources, 
+and allow the other service, time to recover.
+
+Imagine CB-Receiver is down:
+
+- CLOSED: CB-Sender calls the receiver normally and monitors failures.
+- OPEN: Once the failure threshold is reached, CB-Sender stops calling the receiver and returns a fallback response.
+- HALF-OPEN: After a waiting period, CB-Sender allows a few test calls to check whether the receiver has recovered.
+- CLOSED again: If the tests succeed, normal calls resume.
+
+the circuit breaker doesn't queue requests or guarantee that all waiting requests will be processed later. It protects the system by temporarily rejecting calls to the failing service.
+
+A circuit breaker prevents a failing service from causing repeated failures across the system while giving it an opportunity to recover.
+
+
+
+====================================================
+
+spring.application.name=CB-Sender
+server.port=8081				
+
+
+########### Circuit Breaker Configuration
+resilience4j.circuitbreaker.instances.receiverCB.registerHealthIndicator=true
+#Actuator to show the circuit breaker's health status (CLOSED, OPEN, or HALF-OPEN) through the health endpoint.
+
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowType=COUNT_BASED
+#Chooses whether to evaluate calls by count or by time.
+
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowSize=5
+#How many calls or time units are in the evaluation window.
+
+resilience4j.circuitbreaker.instances.receiverCB.minimumNumberOfCalls=5
+#the circuit breaker waits for a minimum number of calls before checking what percentage of them failed.
+
+resilience4j.circuitbreaker.instances.receiverCB.failureRateThreshold=50
+#The failure percentage that triggers OPEN.
+
+resilience4j.circuitbreaker.instances.receiverCB.waitDurationInOpenState=10s
+#How long the breaker stays OPEN before recovery testing.
+
+
+resilience4j.circuitbreaker.instances.receiverCB.permittedNumberOfCallsInHalfOpenState=2
+#Maximum test calls allowed in HALF-OPEN.
+
+resilience4j.circuitbreaker.instances.receiverCB.automaticTransitionFromOpenToHalfOpenEnabled=true
+#Automatically moves OPEN to HALF-OPEN after the wait.
+
+########### Actuator
+management.endpoints.web.exposure.include=health,info,circuitbreakers,circuitbreakerevents
+#Selects which Actuator endpoints are accessible over HTTP.
+
+management.endpoint.health.show-details=always
+#Controls how much health information is shown.
+
+management.health.circuitbreakers.enabled=true
+#Enables circuit-breaker health information in the health system.
+
+
+=================================================================================================
+Your experiment is working exactly as expected! Here are concise notes you can keep for revision.
+
+## 1. Flow of events I observed
+
+1. First 4 failed calls: The circuit remained CLOSED because the minimum of 5 calls had not yet been reached. 
+The fallback message appeared for each failed call.
+2. 5th failed call: All 5 calls failed, giving a 100% failure rate. Since this exceeded the 50% threshold, 
+the circuit became OPEN.
+3. After 10 seconds: The circuit automatically moved from OPEN to HALF-OPEN.
+4. Receiver still unavailable: Test calls failed, so the circuit returned to OPEN and waited another 10 seconds.
+5. Receiver restarted: The first successful test call did not close the circuit because 
+2 test calls were permitted in HALF-OPEN.
+6. Second successful test call: The circuit moved to CLOSED because both test calls succeeded.
+
+## 2. Why do we need three different count-related properties?
+
+All three work together, but each answers a different question.
+
+| Property               | Question it answers                                             | Your value |
+| ---------------------- | --------------------------------------------------------------- | ---------- |
+| `slidingWindowSize`    | How many recent calls should we examine?                        | 5          |
+| `minimumNumberOfCalls` | How many calls must occur before we calculate the failure rate? | 5          |
+| `failureRateThreshold` | What percentage of failures should trigger OPEN?                | 50%        |
+
+Imagine you made 5 calls and 3 failed.
+
+- Window size = 5: examine the last 5 calls.
+- Minimum calls = 5: we now have enough calls to evaluate.
+- Failure rate = 3/5 = 60%.
+- Since 60% exceeds 50%, the circuit opens.
+
+Why keep them separate? You could examine 10 recent calls, require at least 5 before evaluating, and 
+open the circuit when failures reach 50%. Each property controls a different part of the decision.
+
+## 3. Difference between the two Actuator endpoints
+
+- `/actuator/circuitbreakers` — tells you the current state of each circuit breaker, such as CLOSED, OPEN, or HALF-OPEN.
+- `/actuator/circuitbreakerevents` — shows events that happened, such as state transitions and 
+recorded circuit-breaker events.
+
+Think of it this way: the first is a current status board; the second is an event history.
+
+## 4. How to use a time-based sliding window
+
+Yes, Resilience4j supports time-based windows.
+
+Replace:
+
+```
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowType=COUNT_BASED
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowSize=5
+```
+
+with:
+
+```
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowType=TIME_BASED
+resilience4j.circuitbreaker.instances.receiverCB.slidingWindowSize=10
+```
+
+Here, `slidingWindowSize=10` means 10 seconds, not 10 calls.
+
+For example, it evaluates calls made during the most recent 10-second window. 
+You still need `minimumNumberOfCalls` to specify the minimum number of calls before calculating the failure rate.
+
+One important distinction: the sliding-window duration and the OPEN waiting duration are separate timers. 
+Your `waitDurationInOpenState=10s` remains 10 seconds regardless of whether the sliding window is count-based or time-based.
